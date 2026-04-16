@@ -11,17 +11,16 @@ const REQUIRED_FIELDS = [
 
 const ALLOWED_COLLEGES = new Set(['LPU', 'MIT']);
 
-const sanitizeString = (value) => (typeof value === 'string' ? value.trim() : '');
+const sanitizeString = (value) =>
+  typeof value === 'string' ? value.trim() : '';
 
 const parseRequestBody = (body) => {
-  if (!body) {
-    return {};
-  }
+  if (!body) return {};
 
   if (typeof body === 'string') {
     try {
       return JSON.parse(body);
-    } catch (error) {
+    } catch {
       throw new Error('Invalid JSON payload');
     }
   }
@@ -29,11 +28,26 @@ const parseRequestBody = (body) => {
   return body;
 };
 
+// ✅ Email validation (global)
+const isValidEmail = (email) => {
+  const regex =
+    /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}$/;
+  return regex.test(email);
+};
+
+// ✅ Phone validation (GLOBAL - E.164 format)
+const isValidPhone = (phone) => {
+  const cleaned = phone.replace(/\s|-/g, '');
+  const regex = /^\+?[1-9]\d{7,14}$/;
+  return regex.test(cleaned);
+};
+
+// ✅ URL validation
 const isValidUrl = (value) => {
   try {
     const parsed = new URL(value);
     return Boolean(parsed.protocol && parsed.host);
-  } catch (error) {
+  } catch {
     return false;
   }
 };
@@ -45,6 +59,7 @@ export default async function handler(request, response) {
 
   try {
     const payload = parseRequestBody(request.body);
+
     const sanitized = {
       firstName: sanitizeString(payload.firstName),
       lastName: sanitizeString(payload.lastName),
@@ -60,22 +75,62 @@ export default async function handler(request, response) {
       submittedAt: sanitizeString(payload.submittedAt),
     };
 
-    const missingField = REQUIRED_FIELDS.find((field) => !sanitized[field]);
+    // ✅ Required fields check
+    const missingField = REQUIRED_FIELDS.find(
+      (field) => !sanitized[field]
+    );
     if (missingField) {
-      return response.status(400).json({ error: `Missing required field: ${missingField}` });
+      return response
+        .status(400)
+        .json({ error: `Missing required field: ${missingField}` });
     }
 
+    // ✅ College validation
     if (!ALLOWED_COLLEGES.has(sanitized.collegeValue)) {
-      return response.status(400).json({ error: 'Invalid college selection' });
+      return response
+        .status(400)
+        .json({ error: 'Invalid college selection' });
     }
 
+    // ✅ URL validation
     if (!isValidUrl(sanitized.resumeLink)) {
-      return response.status(400).json({ error: 'Invalid resume link' });
+      return response
+        .status(400)
+        .json({ error: 'Invalid resume link' });
     }
 
-    const submittedAt = sanitized.submittedAt || new Date().toISOString();
+    // ✅ Email validation
+    if (!isValidEmail(sanitized.email)) {
+      return response
+        .status(400)
+        .json({ error: 'Invalid personal email' });
+    }
 
-    const appsScriptUrl = sanitizeString(process.env.GOOGLE_APPS_SCRIPT_URL);
+    if (!isValidEmail(sanitized.collegeEmail)) {
+      return response
+        .status(400)
+        .json({ error: 'Invalid college email' });
+    }
+
+    if (!isValidEmail(sanitized.officialEmail)) {
+      return response
+        .status(400)
+        .json({ error: 'Invalid official email' });
+    }
+
+    // ✅ Phone validation (GLOBAL)
+    if (!isValidPhone(sanitized.phone)) {
+      return response
+        .status(400)
+        .json({ error: 'Invalid phone number (use international format)' });
+    }
+
+    const submittedAt =
+      sanitized.submittedAt || new Date().toISOString();
+
+    const appsScriptUrl = sanitizeString(
+      process.env.GOOGLE_APPS_SCRIPT_URL
+    );
 
     if (!appsScriptUrl) {
       throw new Error('Missing GOOGLE_APPS_SCRIPT_URL');
@@ -83,9 +138,7 @@ export default async function handler(request, response) {
 
     const scriptResponse = await fetch(appsScriptUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...sanitized,
         submittedAt,
@@ -96,12 +149,18 @@ export default async function handler(request, response) {
     let scriptResult;
 
     try {
-      scriptResult = responseText ? JSON.parse(responseText) : null;
+      scriptResult = responseText
+        ? JSON.parse(responseText)
+        : null;
     } catch (parseError) {
-      console.warn('Unable to parse Apps Script response as JSON:', parseError);
+      console.warn(
+        'Unable to parse Apps Script response as JSON:',
+        parseError
+      );
     }
 
-    const scriptSucceeded = scriptResponse.ok && (scriptResult?.success ?? true);
+    const scriptSucceeded =
+      scriptResponse.ok && (scriptResult?.success ?? true);
 
     if (!scriptSucceeded) {
       const message =
@@ -123,7 +182,10 @@ export default async function handler(request, response) {
     });
   } catch (error) {
     console.error('Error processing application:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
+
+    const message =
+      error instanceof Error ? error.message : 'Unknown error';
+
     return response.status(500).json({
       error: 'Internal server error',
       message,
