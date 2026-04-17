@@ -11,6 +11,8 @@ export const GUEST_AUTH_ROUTE_PREFIXES = [
 
 export const PUBLIC_MARKETING_ROUTE_PREFIXES = [
   "/",
+  "/metric",
+  "/metrics",
   "/privacy-policy",
   "/faq",
   "/carrer-privacy-policy",

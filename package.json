@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "PORT=3005 node server.js",
     "dev:vercel": "vercel dev --listen 3000",
     "security:gitleaks": "bash scripts/security/run-gitleaks.sh",
     "security:audit": "bash scripts/security/open-source-audit.sh",

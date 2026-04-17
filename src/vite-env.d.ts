@@ -26,7 +26,6 @@ interface ImportMetaEnv {
 
   // Voice Agent
   readonly VITE_VOICE_AGENT_URL?: string;
-
   // Finnhub Stock API
   readonly VITE_FINNHUB_API_KEY?: string;
 
