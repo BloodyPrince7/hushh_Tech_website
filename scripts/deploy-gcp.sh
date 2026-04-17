@@ -121,25 +121,46 @@ ENV_VARS="NODE_ENV=production"
 [ -n "${GOOGLE_WALLET_PRIVATE_KEY:-}" ] && ENV_VARS+=",GOOGLE_WALLET_PRIVATE_KEY=${GOOGLE_WALLET_PRIVATE_KEY}"
 [ -n "${GOOGLE_WALLET_CLASS_SUFFIX:-}" ] && ENV_VARS+=",GOOGLE_WALLET_CLASS_SUFFIX=${GOOGLE_WALLET_CLASS_SUFFIX}"
 [ -n "${GOOGLE_WALLET_ALLOWED_ORIGINS:-}" ] && ENV_VARS+=",GOOGLE_WALLET_ALLOWED_ORIGINS=${GOOGLE_WALLET_ALLOWED_ORIGINS}"
+[ -n "${SUPABASE_URL:-}" ] && ENV_VARS+=",SUPABASE_URL=${SUPABASE_URL}"
 [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && ENV_VARS+=",SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}"
+[ -n "${LEGACY_SUPABASE_URL:-}" ] && ENV_VARS+=",LEGACY_SUPABASE_URL=${LEGACY_SUPABASE_URL}"
+[ -n "${LEGACY_SUPABASE_SERVICE_ROLE_KEY:-}" ] && ENV_VARS+=",LEGACY_SUPABASE_SERVICE_ROLE_KEY=${LEGACY_SUPABASE_SERVICE_ROLE_KEY}"
+[ -n "${METRICS_REPORT_RECIPIENTS:-}" ] && ENV_VARS+=",METRICS_REPORT_RECIPIENTS=${METRICS_REPORT_RECIPIENTS}"
+[ -n "${METRICS_REPORT_TIMEZONE:-}" ] && ENV_VARS+=",METRICS_REPORT_TIMEZONE=${METRICS_REPORT_TIMEZONE}"
+[ -n "${METRICS_REPORT_SCHEDULE:-}" ] && ENV_VARS+=",METRICS_REPORT_SCHEDULE=${METRICS_REPORT_SCHEDULE}"
+[ -n "${METRICS_REPORT_FROM_EMAIL:-}" ] && ENV_VARS+=",METRICS_REPORT_FROM_EMAIL=${METRICS_REPORT_FROM_EMAIL}"
+[ -n "${METRICS_REPORT_SHARED_SECRET:-}" ] && ENV_VARS+=",METRICS_REPORT_SHARED_SECRET=${METRICS_REPORT_SHARED_SECRET}"
 [ -n "${GOOGLE_API_KEY:-}" ] && ENV_VARS+=",GOOGLE_API_KEY=${GOOGLE_API_KEY}"
+SECRET_BINDINGS=""
+[ -n "${LOOKER_STUDIO_EMBED_URL_SECRET_NAME:-}" ] && SECRET_BINDINGS+=",LOOKER_STUDIO_EMBED_URL=${LOOKER_STUDIO_EMBED_URL_SECRET_NAME}:latest"
+[ -n "${GA4_PROPERTY_ID_SECRET_NAME:-}" ] && SECRET_BINDINGS+=",GA4_PROPERTY_ID=${GA4_PROPERTY_ID_SECRET_NAME}:latest"
+[ -n "${GA4_ALLOWED_HOSTNAMES_SECRET_NAME:-}" ] && SECRET_BINDINGS+=",GA4_ALLOWED_HOSTNAMES=${GA4_ALLOWED_HOSTNAMES_SECRET_NAME}:latest"
+[ -n "${LEGACY_SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME:-}" ] && SECRET_BINDINGS+=",LEGACY_SUPABASE_SERVICE_ROLE_KEY=${LEGACY_SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME}:latest"
+[ -n "${METRICS_REPORT_SHARED_SECRET_SECRET_NAME:-}" ] && SECRET_BINDINGS+=",METRICS_REPORT_SHARED_SECRET=${METRICS_REPORT_SHARED_SECRET_SECRET_NAME}:latest"
+
+DEPLOY_ARGS=(
+  --source .
+  --region "$REGION"
+  --project "$PROJECT_ID"
+  --platform managed
+  --allow-unauthenticated
+  --memory "$MEMORY"
+  --cpu "$CPU"
+  --min-instances "$MIN_INSTANCES"
+  --max-instances "$MAX_INSTANCES"
+  --concurrency 250
+  --timeout 60s
+  --set-env-vars "$ENV_VARS"
+  --quiet
+)
+
+if [ -n "$SECRET_BINDINGS" ]; then
+  DEPLOY_ARGS+=(--set-secrets "${SECRET_BINDINGS#,}")
+fi
 
 # Deploy using Cloud Run source deploy (builds in Cloud Build automatically)
 # Note: .gcloudignore ensures dist/ is included in the upload
-gcloud run deploy "$SERVICE_NAME" \
-  --source . \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --platform managed \
-  --allow-unauthenticated \
-  --memory "$MEMORY" \
-  --cpu "$CPU" \
-  --min-instances "$MIN_INSTANCES" \
-  --max-instances "$MAX_INSTANCES" \
-  --concurrency 250 \
-  --timeout 60s \
-  --set-env-vars "$ENV_VARS" \
-  --quiet
+gcloud run deploy "$SERVICE_NAME" "${DEPLOY_ARGS[@]}"
 
 # ---------------------------------------------------------------------------
 # Step 4: Get the service URL

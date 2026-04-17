@@ -44,7 +44,7 @@ app.use((_req, res, next) => {
       "img-src 'self' data: blob: https: http:",
       // Wallet upstream traffic must stay behind same-origin /api proxies to avoid CSP regressions.
       "connect-src 'self' https://*.plaid.com https://*.supabase.co wss://*.supabase.co https://www.google.com https://www.gstatic.com https://www.google-analytics.com https://www.googletagmanager.com https://api.emailjs.com https://generativelanguage.googleapis.com https://*.googleapis.com https://www.walletlink.org wss://www.walletlink.org wss://mainnet.infura.io wss://*.infura.io https://*.seondnsresolve.com https://www.recaptcha.net https://hushhtech-nda-generation-53407187172.us-central1.run.app",
-      "frame-src 'self' https://cdn.plaid.com https://*.plaid.com https://www.google.com https://www.gstatic.com https://calendly.com https://www.recaptcha.net",
+      "frame-src 'self' https://cdn.plaid.com https://*.plaid.com https://www.google.com https://www.gstatic.com https://calendly.com https://www.recaptcha.net https://lookerstudio.google.com https://datastudio.google.com",
       "media-src 'self' blob: data:",
       "worker-src 'self' blob:",
       "child-src 'self' blob: https://cdn.plaid.com https://*.plaid.com",
@@ -85,6 +85,9 @@ app.all('/api/gemini-chat', async (req, res) => wrapHandler(await loadApi('gemin
 app.all('/api/gemini-ephemeral-token', async (req, res) => wrapHandler(await loadApi('gemini-ephemeral-token'))(req, res));
 app.all('/api/generate-investor-profile', async (req, res) => wrapHandler(await loadApi('generate-investor-profile'))(req, res));
 app.all('/api/delete-account', async (req, res) => wrapHandler(await loadApi('delete-account'))(req, res));
+app.all('/api/analytics/realtime', async (req, res) => wrapHandler(await loadApi('analytics/realtime'))(req, res));
+app.all('/api/metrics/summary', async (req, res) => wrapHandler(await loadApi('metrics/summary'))(req, res));
+app.all('/api/metrics/send-report', async (req, res) => wrapHandler(await loadApi('metrics/send-report'))(req, res));
 app.all('/api/public-investor-profile', async (req, res) => wrapHandler(await loadApi('public-investor-profile'))(req, res));
 app.all('/api/send-email-notification', async (req, res) => wrapHandler(await loadApi('send-email-notification'))(req, res));
 app.all('/api/wallet-pass', async (req, res) => wrapHandler(await loadApi('wallet-pass'))(req, res));
@@ -126,8 +129,12 @@ app.use(express.static(DIST_DIR, {
 // No-cache pages (auth, profile, onboarding, etc.)
 const NO_CACHE_PATHS = [
   '/login', '/signup', '/onboarding', '/hushh-user-profile',
-  '/discover-fund-a', '/profile', '/community', '/delete-account', '/sign-nda',
+  '/discover-fund-a', '/profile', '/community', '/delete-account', '/sign-nda', '/metric', '/metrics',
 ];
+
+app.get('/metric', (_req, res) => {
+  res.redirect(302, '/metrics');
+});
 
 app.get('*', (req, res) => {
   // Set no-cache for dynamic pages
@@ -136,6 +143,14 @@ app.get('*', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
+  }
+  if (
+    req.path === '/metric' ||
+    req.path.startsWith('/metric/') ||
+    req.path === '/metrics' ||
+    req.path.startsWith('/metrics/')
+  ) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   }
 
   res.sendFile(join(DIST_DIR, 'index.html'));
