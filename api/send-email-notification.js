@@ -1,34 +1,51 @@
-// Vercel Serverless Function for Email Notifications
-// Works with Gmail SMTP (Node.js compatible)
-
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
+import Redis from 'ioredis';
 
-// CORS headers
+/* ---------------- REDIS ---------------- */
+const redis = new Redis(process.env.REDIS_URL);
+
+/* ---------------- CORS ---------------- */
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-function createSupabaseAdminClient() {
-  const supabaseUrl = process.env.SUPABASE_URL?.trim();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+/* ---------------- RATE LIMIT ---------------- */
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW = 60; // seconds
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error('Supabase server environment variables are missing');
+async function rateLimit(ip) {
+  const key = `rate:${ip}`;
+  const count = await redis.incr(key);
+
+  if (count === 1) {
+    await redis.expire(key, RATE_LIMIT_WINDOW);
   }
 
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return count <= RATE_LIMIT_MAX;
+}
+
+/* ---------------- VALIDATION ---------------- */
+const ALLOWED_TYPES = new Set(['profile_view', 'payment_received']);
+
+function isValidSlug(slug) {
+  return typeof slug === 'string' && /^[a-zA-Z0-9-_]{3,50}$/.test(slug);
+}
+
+/* ---------------- SUPABASE ---------------- */
+function createSupabaseAdminClient() {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
 }
 
 async function resolvePublicProfileOwner(slug) {
   const supabase = createSupabaseAdminClient();
+
   const { data, error } = await supabase
     .from('investor_profiles')
     .select('email, name')
@@ -37,12 +54,8 @@ async function resolvePublicProfileOwner(slug) {
     .eq('user_confirmed', true)
     .maybeSingle();
 
-  if (error) {
-    throw new Error(`Failed to resolve profile owner: ${error.message}`);
-  }
-
-  if (!data?.email) {
-    throw new Error('Public profile owner email not found');
+  if (error || !data?.email) {
+    throw new Error('Profile not found');
   }
 
   return {
@@ -51,8 +64,62 @@ async function resolvePublicProfileOwner(slug) {
   };
 }
 
+/* ---------------- EMAIL TEMPLATES ---------------- */
+
+function profileViewTemplate(name, slug) {
+  const viewTime = new Date().toLocaleString();
+
+  return {
+    subject: `👀 New Profile View - ${name}`,
+    html: `
+      <div style="font-family: sans-serif; max-width:600px;">
+        <h2 style="color:#0A84FF;">👀 Someone viewed your profile</h2>
+
+        <div style="background:#F8FAFC;padding:20px;border-radius:8px;">
+          <p><strong>Profile:</strong> ${name}</p>
+          <p><strong>Time:</strong> ${viewTime}</p>
+          <p><strong>Visitor:</strong> Anonymous</p>
+        </div>
+
+        <a href="https://hushhtech.com/investor/${slug}" 
+           style="display:inline-block;margin-top:15px;padding:10px 20px;
+                  background:#0A84FF;color:white;text-decoration:none;border-radius:6px;">
+          View Profile →
+        </a>
+      </div>
+    `,
+  };
+}
+
+function paymentTemplate(name, slug) {
+  const time = new Date().toLocaleString();
+
+  return {
+    subject: `💰 Payment Received`,
+    html: `
+      <div style="font-family:sans-serif;max-width:600px;">
+        <h2 style="color:#34C759;">💰 Payment Received</h2>
+
+        <div style="background:#F0F9FF;padding:20px;border-radius:8px;">
+          <p><strong>Amount:</strong> $1.00</p>
+          <p><strong>Profile:</strong> ${name}</p>
+          <p><strong>Time:</strong> ${time}</p>
+        </div>
+
+        <a href="https://hushhtech.com/investor/${slug}" 
+           style="display:inline-block;margin-top:15px;padding:10px 20px;
+                  background:#34C759;color:white;text-decoration:none;border-radius:6px;">
+          View Profile →
+        </a>
+      </div>
+    `,
+  };
+}
+
+/* ---------------- HANDLER ---------------- */
 export default async function handler(req, res) {
-  // Handle CORS preflight
+  Object.entries(corsHeaders).forEach(([k, v]) => res.setHeader(k, v));
+
   if (req.method === 'OPTIONS') {
     return res.status(200).json({ ok: true });
   }
@@ -61,10 +128,24 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  if (!(await rateLimit(ip))) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+
   try {
     const { type, slug, profileOwnerEmail, profileName, testEmail } = req.body;
 
-    // Configure Gmail transporter
+    /* -------- VALIDATION -------- */
+    if (!ALLOWED_TYPES.has(type)) {
+      return res.status(400).json({ error: 'Invalid type' });
+    }
+
+    if (!isValidSlug(slug)) {
+      return res.status(400).json({ error: 'Invalid slug format' });
+    }
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -73,123 +154,54 @@ export default async function handler(req, res) {
       },
     });
 
-    // Test mode: Send test email
+    /* -------- TEST EMAIL -------- */
     if (testEmail) {
       await transporter.sendMail({
         from: `"Hushh Notifications" <${process.env.GMAIL_USER}>`,
         to: testEmail,
-        subject: '🧪 Test Email from Hushh',
-        html: `
-          <div style="font-family: -apple-system, sans-serif; max-width: 600px;">
-            <h2>✅ Email System Working!</h2>
-            <p>This is a test email from your Hushh notification system.</p>
-            <p><strong>Gmail:</strong> ${process.env.GMAIL_USER}</p>
-            <p><strong>Time:</strong> ${new Date().toLocaleString()}</p>
-            <p>If you receive this, email notifications are working! 🎉</p>
-          </div>
-        `,
+        subject: 'Test Email',
+        html: '<p>Email system working</p>',
       });
 
-      return res.status(200).json({ success: true, message: 'Test email sent!' });
+      return res.status(200).json({ success: true });
     }
 
-    // Validate required fields
-    if (!type || !slug) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
+    /* -------- RESOLVE USER -------- */
+    let email = profileOwnerEmail;
+    let name = profileName || 'Your Profile';
 
-    let resolvedOwnerEmail = profileOwnerEmail || '';
-    let resolvedProfileName = profileName || 'Your Profile';
-
-    if (!resolvedOwnerEmail) {
+    if (!email) {
       const owner = await resolvePublicProfileOwner(slug);
-      resolvedOwnerEmail = owner.email;
-      if (!profileName) {
-        resolvedProfileName = owner.name;
-      }
+      email = owner.email;
+      name = owner.name;
     }
 
-    let subject = '';
-    let html = '';
+    /* -------- TEMPLATE SELECT -------- */
+    let template;
 
-    // Build email based on type
     if (type === 'profile_view') {
-      const viewTime = new Date().toLocaleString('en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
-
-      subject = `👀 New Profile View - ${resolvedProfileName}`;
-      html = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #0A84FF;">👀 Someone is viewing your profile!</h2>
-          
-          <div style="background: #F8FAFC; border-radius: 8px; padding: 20px; margin: 20px 0;">
-            <p style="margin: 8px 0;"><strong>Profile:</strong> ${resolvedProfileName}</p>
-            <p style="margin: 8px 0;"><strong>Time:</strong> ${viewTime}</p>
-            <p style="margin: 8px 0;"><strong>Visitor:</strong> Anonymous</p>
-          </div>
-
-          <a href="https://hushhtech.com/investor/${slug}" 
-             style="display: inline-block; background: #0A84FF; color: white; padding: 12px 24px; 
-                    text-decoration: none; border-radius: 8px; margin-top: 16px;">
-            View Your Profile →
-          </a>
-
-          <p style="color: #6B7280; font-size: 14px; margin-top: 32px;">
-            Instant notification - someone is browsing your profile now.
-          </p>
-        </div>
-      `;
-    } else if (type === 'payment_received') {
-      const paymentTime = new Date().toLocaleString('en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
-
-      subject = `💰 Payment Received - $1.00`;
-      html = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #34C759;">💰 Payment Received!</h2>
-          
-          <p style="font-size: 16px; color: #0B1120;">
-            Great news! Someone just paid to unlock chat access.
-          </p>
-
-          <div style="background: #F0F9FF; border-left: 4px solid #0A84FF; padding: 20px; margin: 20px 0;">
-            <p style="margin: 8px 0;"><strong>Amount:</strong> $1.00</p>
-            <p style="margin: 8px 0;"><strong>Access:</strong> 30 minutes</p>
-            <p style="margin: 8px 0;"><strong>Profile:</strong> ${resolvedProfileName}</p>
-            <p style="margin: 8px 0;"><strong>Time:</strong> ${paymentTime}</p>
-          </div>
-
-          <a href="https://hushhtech.com/investor/${slug}" 
-             style="display: inline-block; background: #34C759; color: white; padding: 12px 24px; 
-                    text-decoration: none; border-radius: 8px; margin-top: 16px;">
-            View Your Profile →
-          </a>
-
-          <p style="color: #6B7280; font-size: 14px; margin-top: 32px;">
-            Check your Stripe dashboard for payout details.
-          </p>
-        </div>
-      `;
+      template = profileViewTemplate(name, slug);
     }
 
-    // Send email
+    if (type === 'payment_received') {
+      template = paymentTemplate(name, slug);
+    }
+
+    /* -------- SEND EMAIL -------- */
     await transporter.sendMail({
       from: `"Hushh Notifications" <${process.env.GMAIL_USER}>`,
-      to: resolvedOwnerEmail,
-      subject,
-      html,
+      to: email,
+      subject: template.subject,
+      html: template.html,
     });
 
-    return res.status(200).json({ success: true, emailSent: true });
+    return res.status(200).json({ success: true });
+
   } catch (error) {
     console.error('Email error:', error);
-    return res.status(500).json({ 
-      error: error.message || 'Failed to send email',
-      details: error.toString()
+
+    return res.status(500).json({
+      error: 'Internal server error',
     });
   }
 }
