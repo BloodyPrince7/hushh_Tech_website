@@ -8,7 +8,7 @@ Repository URL: https://github.com/hushh-labs/hushh_Tech_website
 
 - A public wrapper and integration layer around Hushh web experiences
 - A place for UI, UX, API wrapper, docs, test, and safe infrastructure contributions
-- A production-backed repository that is maintained with protected branches and maintainer-controlled deploys
+- A production-backed repository that is maintained with protected branches, CODEOWNERS review, and maintainer-controlled deploys
 
 ## What this repo is not
 
@@ -20,7 +20,16 @@ Repository URL: https://github.com/hushh-labs/hushh_Tech_website
 
 - Production secrets belong in GCP Secret Manager or the minimal server-side secret store needed for a specific runtime
 - `main` is protected and intended to move through pull requests, checks, and maintainer review
+- `develop` is also protected and used for collaboration only; deployments promote from green `main` SHAs
 - Public contributors should assume that production infra, credentials, and secret rotation stay maintainer-owned
+
+## Governance
+
+- `@ankitkumarsingh1702` is the default codeowner and required approving reviewer for protected branches
+- automated CI, env checks, lint checks, and AI review are advisory or blocking based on repository rules
+- DCO sign-off is expected on commits for contribution traceability
+- deployments are gated by post-merge smoke and promoted by approved SHAs instead of raw branch pushes
+- fork PRs may need maintainer approval before untrusted code-executing workflows can run
 
 ## Safe contribution areas
 
@@ -47,11 +56,12 @@ npm run security:gitleaks
 
 See:
 
-- [CONTRIBUTING.md](/Users/ankitkumarsingh/hushhTech/CONTRIBUTING.md)
-- [SECURITY.md](/Users/ankitkumarsingh/hushhTech/SECURITY.md)
-- [CODE_OF_CONDUCT.md](/Users/ankitkumarsingh/hushhTech/CODE_OF_CONDUCT.md)
-- [SUPPORT.md](/Users/ankitkumarsingh/hushhTech/SUPPORT.md)
-- [LICENSE](/Users/ankitkumarsingh/hushhTech/LICENSE)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SUPPORT.md](SUPPORT.md)
+- [LICENSE](LICENSE)
+- [NOTICE](NOTICE)
 
 ## Project layout
 
@@ -71,3 +81,5 @@ See:
 - Keep historical or manual SQL in `supabase/manual-sql/`
 - Keep repo-entrypoint files in the root; move product docs into `docs/`
 - Prefer PR-sized, decision-clear changes over broad mixed diffs
+- Follow Apache-2.0 contribution expectations for attribution, notice handling, and review traceability
+- Use `git commit -s` so commit history carries a DCO sign-off

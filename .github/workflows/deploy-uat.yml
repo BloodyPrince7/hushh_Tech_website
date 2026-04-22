@@ -1,34 +1,118 @@
 name: Deploy to UAT
 on:
-  push:
-    branches: [develop]
+  workflow_run:
+    workflows:
+      - Main Post-Merge Smoke
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact green main SHA to deploy to UAT (blank defaults to latest origin/main)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: deploy-uat-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.sha || github.run_id }}
+  cancel-in-progress: false
 
 env:
+  NODE_VERSION: "20.19.0"
   SMOKE_BASE_URL: https://uat.hushhtech.com
   SHARED_SECRETS_PROJECT: "53407187172"
   VITE_SUPABASE_REDIRECT_URL: https://uat.hushhtech.com/auth/callback
   VITE_PLAID_REDIRECT_URI: https://uat.hushhtech.com/onboarding/financial-link
+  VITE_SUPABASE_URL: https://example.supabase.co
+  VITE_SUPABASE_ANON_KEY: ci-anon-key
+  VITE_ALLOW_INSECURE_BROWSER_LLM: "false"
 
 jobs:
   deploy:
     name: Build & Deploy to Cloud Run (UAT)
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    environment:
+      name: UAT – hushh-tech
+      url: https://uat.hushhtech.com
     steps:
+      - name: Assert manual dispatch originates from main
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Refusing UAT deploy from '${GITHUB_REF_NAME}'. Trigger this workflow from 'main' only."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Resolve deployment SHA
+        id: resolve-sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+          elif [ -n "${{ github.event.inputs.sha }}" ]; then
+            DEPLOY_SHA="${{ github.event.inputs.sha }}"
+          else
+            git fetch --no-tags origin main
+            DEPLOY_SHA="$(git rev-parse origin/main)"
+          fi
+
+          echo "sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployment SHA against green main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUIRED_BRANCH: main
+          REQUIRE_CI_SUCCESS: "1"
+          REQUIRED_CHECK_NAME: Main Post-Merge Smoke Gate
+        run: bash scripts/ci/require-deploy-sha-on-main.sh "${{ steps.resolve-sha.outputs.sha }}"
+
+      - name: Checkout deployment SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "${{ steps.resolve-sha.outputs.sha }}"
 
       # 1. Prepare Node.js and dependencies
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --no-audit --no-fund
 
       # 2. Auth with GCP and load shared web-build secrets
+      # Prefer an environment-scoped GCP_SA_KEY_UAT secret so deploy approval gates access.
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_UAT }}
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set GCP project context
+        run: gcloud config set project hushh-tech-uat
+
+      - name: Assert GCP project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null)"
+          if [ "$ACTIVE_PROJECT" != "hushh-tech-uat" ]; then
+            echo "Refusing deploy: expected project 'hushh-tech-uat' but got '$ACTIVE_PROJECT'."
+            exit 1
+          fi
 
       - name: Load web auth build env from Secret Manager
         shell: bash
@@ -36,19 +120,29 @@ jobs:
           set -euo pipefail
           supabase_url="$(gcloud secrets versions access latest --project="$SHARED_SECRETS_PROJECT" --secret="SUPABASE_URL")"
           supabase_anon_key="$(gcloud secrets versions access latest --project="$SHARED_SECRETS_PROJECT" --secret="SUPABASE_ANON_KEY")"
+          supabase_service_role_key="$(gcloud secrets versions access latest --project="$SHARED_SECRETS_PROJECT" --secret="SUPABASE_SERVICE_ROLE_KEY")"
           if [ -z "$supabase_url" ] || [ -z "$supabase_anon_key" ]; then
             echo "::error::Supabase web auth secrets are empty"
             exit 1
           fi
+          if [ -z "$supabase_service_role_key" ]; then
+            echo "::error::Supabase service role secret is empty"
+            exit 1
+          fi
+          echo "::add-mask::$supabase_url"
+          echo "::add-mask::$supabase_anon_key"
+          echo "::add-mask::$supabase_service_role_key"
           printf 'VITE_SUPABASE_URL=%s\n' "$supabase_url" >> "$GITHUB_ENV"
           printf 'VITE_SUPABASE_ANON_KEY=%s\n' "$supabase_anon_key" >> "$GITHUB_ENV"
+          printf 'SUPABASE_URL=%s\n' "$supabase_url" >> "$GITHUB_ENV"
+          printf 'SUPABASE_SERVICE_ROLE_KEY=%s\n' "$supabase_service_role_key" >> "$GITHUB_ENV"
 
       # 3. Build Vite app in runner (FAST — no Docker needed)
       - name: Validate client auth env
         shell: bash
         run: |
           missing=0
-          for name in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY VITE_SUPABASE_REDIRECT_URL VITE_PLAID_REDIRECT_URI; do
+          for name in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY VITE_SUPABASE_REDIRECT_URL VITE_PLAID_REDIRECT_URI VITE_ALLOW_INSECURE_BROWSER_LLM; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is required for the web auth build"
               missing=1
@@ -57,7 +151,12 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-      - run: npx vite build
+          if [ "$VITE_ALLOW_INSECURE_BROWSER_LLM" != "false" ]; then
+            echo "::error::VITE_ALLOW_INSECURE_BROWSER_LLM must remain false in UAT."
+            exit 1
+          fi
+      - run: npm run env:check
+      - run: npm run build:web
 
       # 4. Deploy pre-built dist/ to Cloud Run (runtime-only Dockerfile)
       - name: Deploy to Cloud Run
@@ -73,6 +172,7 @@ jobs:
             --min-instances=0 \
             --max-instances=3 \
             --port=8080 \
+            --update-env-vars="NODE_ENV=staging,SUPABASE_URL=${SUPABASE_URL},SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}" \
             --clear-base-image \
             --quiet
 
@@ -80,4 +180,12 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Smoke OAuth startup on deployed host
-        run: node scripts/smoke-oauth-start.mjs "$SMOKE_BASE_URL"
+        run: node scripts/smoke-oauth-start.mjs "$SMOKE_BASE_URL" > /tmp/uat-oauth-smoke.json
+
+      - name: Upload UAT smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-oauth-smoke
+          if-no-files-found: error
+          path: /tmp/uat-oauth-smoke.json

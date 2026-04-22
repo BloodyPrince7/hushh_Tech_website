@@ -1,0 +1,233 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20.19.0"
+  VITE_SUPABASE_URL: "https://example.supabase.co"
+  VITE_SUPABASE_ANON_KEY: "ci-anon-key"
+  VITE_SUPABASE_REDIRECT_URL: "https://hushhtech.com/auth/callback"
+  VITE_PLAID_REDIRECT_URI: "https://hushhtech.com/onboarding/financial-link"
+  VITE_ALLOW_INSECURE_BROWSER_LLM: "false"
+
+jobs:
+  dco:
+    name: DCO
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Signed-off-by trailers
+        run: npm run dco:check
+
+      - name: Upload DCO report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dco-report
+          if-no-files-found: error
+          path: tmp/ci/dco-report.txt
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz
+          chmod +x gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Run secret scan
+        run: bash scripts/ci/orchestrate.sh secret
+
+  env-contract:
+    name: Env Contract Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate environment contract
+        run: bash scripts/ci/orchestrate.sh env
+
+      - name: Upload env contract report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: env-contract-report
+          if-no-files-found: error
+          path: tmp/ci/env-contract-report.json
+
+  pr-hygiene:
+    name: PR Hygiene
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate PR template completeness
+        run: npm run pr:hygiene
+
+      - name: Upload PR hygiene report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-hygiene-report
+          if-no-files-found: error
+          path: tmp/ci/pr-hygiene-report.json
+
+  web-validation:
+    name: Web Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test, type-check, and build
+        run: bash scripts/ci/orchestrate.sh web
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run phased lint checks
+        run: bash scripts/ci/orchestrate.sh lint
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-full-report
+          if-no-files-found: error
+          path: tmp/ci/eslint-full-report.json
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Capture npm audit report
+        run: |
+          mkdir -p tmp/ci
+          npm audit --json > tmp/ci/npm-audit-report.json || true
+
+      - name: Enforce audit regression budget
+        run: node scripts/ci/check-audit-regression.mjs tmp/ci/npm-audit-report.json
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          if-no-files-found: error
+          path: tmp/ci/npm-audit-report.json
+
+  ci-status:
+    name: CI Status Gate
+    if: always()
+    needs:
+      - dco
+      - secret-scan
+      - env-contract
+      - pr-hygiene
+      - web-validation
+      - lint
+      - security-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate upstream job outcomes
+        shell: bash
+        run: |
+          declare -A REQUIRED_RESULTS=(
+            ["DCO"]="${{ needs.dco.result }}"
+            ["Secret Scan"]="${{ needs.secret-scan.result }}"
+            ["Env Contract Check"]="${{ needs.env-contract.result }}"
+            ["PR Hygiene"]="${{ needs.pr-hygiene.result }}"
+            ["Web Validation"]="${{ needs.web-validation.result }}"
+            ["Lint"]="${{ needs.lint.result }}"
+            ["Security Audit"]="${{ needs.security-audit.result }}"
+          )
+
+          failed=0
+          for job in "${!REQUIRED_RESULTS[@]}"; do
+            result="${REQUIRED_RESULTS[$job]}"
+            echo "$job => $result"
+            if [ "$job" = "PR Hygiene" ] && [ "$result" = "skipped" ]; then
+              continue
+            fi
+            if [ "$job" = "DCO" ] && [ "$result" = "skipped" ]; then
+              continue
+            fi
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more required PR validation jobs failed."
+            exit 1
+          fi

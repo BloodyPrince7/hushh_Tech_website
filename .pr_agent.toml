@@ -1,0 +1,47 @@
+[config]
+model = "vertex_ai/gemini-2.5-pro"
+fallback_models = ["vertex_ai/gemini-2.5-flash", "gpt-5"]
+max_model_tokens = 128000
+custom_model_max_tokens = 1048576
+ai_timeout = 480
+output_relevant_configurations = true
+
+[pr_reviewer]
+inline_code_comments = true
+estimate_effort = true
+persistent_comment = true
+final_update_message = true
+extra_instructions = """\
+Review this repository like a production web app with deploy-sensitive auth and API paths.
+
+Prioritize:
+- production-breaking behavior and regressions
+- security issues, secret leaks, and auth/session flaws
+- missing or incorrect environment-variable handling
+- CI/CD mistakes, especially anything that weakens required checks or allows unsafe deploy paths
+- API route correctness, input validation, and fail-closed behavior
+- missing tests or smoke coverage for risky changes
+
+Do not spend review budget on minor style nits unless they hide a real defect.
+Call out concrete files and behaviors. Prefer actionable comments over generic praise.
+"""
+
+[pr_description]
+extra_instructions = """\
+Keep summaries brief and reviewer-friendly.
+Highlight deploy, auth, API, security, and environment impacts explicitly when present.
+Do not replace a strong human-written PR title with a weaker generic one.
+"""
+
+[pr_code_suggestions]
+focus_only_on_problems = true
+suggestions_depth = "exhaustive"
+num_code_suggestions = 8
+num_code_suggestions_per_chunk = 12
+num_best_practice_suggestions = 12
+suggestions_score_threshold = 7
+dual_publishing_score_threshold = 8
+commitable_code_suggestions = false
+
+[best_practices]
+organization_name = "Hushh"

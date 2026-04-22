@@ -1,11 +1,8 @@
-# PR-Agent: AI-Powered Code Review
-# Uses OpenAI GPT to provide intelligent code review suggestions
-
 name: PR Agent
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
   issue_comment:
     types: [created]
 
@@ -14,45 +11,107 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+  PR_AGENT_VERTEX_PROJECT: "hushone-app"
+  PR_AGENT_VERTEX_LOCATION: "us-central1"
+
 jobs:
   pr_agent:
-    name: AI Code Review
+    name: AI Code Review (Gemini)
     runs-on: ubuntu-latest
-    # Run on PR events or when commenting on a PR with /review, /improve, /describe, etc.
     if: >
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' && 
-       github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/'))
+      github.event.sender.type != 'Bot' &&
+      (
+        github.event_name == 'pull_request_target' ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request &&
+         contains(github.event.comment.body, '/'))
+      )
     
     steps:
+      - name: Capture PR agent verification window
+        id: agent-window
+        shell: bash
+        run: printf 'started_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GCP for PR review
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_UAT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
       - name: PR Agent Action
-        uses: Codium-ai/pr-agent@main
+        uses: qodo-ai/pr-agent@main
         env:
-          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Configuration
-          PR_AGENT_CONFIG: |
-            [pr_reviewer]
-            # Enable automatic review on PR open
-            auto_review = true
-            # Provide inline suggestions
-            inline_code_comments = true
-            # Review effort estimation
-            estimate_effort = true
-            
-            [pr_description]
-            # Auto-generate PR descriptions
-            auto_description = true
-            
-            [pr_code_suggestions]
-            # Provide code improvement suggestions
-            auto_improve = true
-            # Maximum suggestions per PR
-            num_code_suggestions = 4
-            
-            [github_action]
-            # Automatically run on new PRs
-            auto_review = true
-            auto_describe = true
-            auto_improve = true
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          VERTEXAI_PROJECT: ${{ env.PR_AGENT_VERTEX_PROJECT }}
+          VERTEXAI_LOCATION: ${{ env.PR_AGENT_VERTEX_LOCATION }}
+          config.model: "vertex_ai/gemini-2.5-pro"
+          config.fallback_models: '["vertex_ai/gemini-2.5-flash","gpt-5"]'
+          config.max_model_tokens: "128000"
+          config.custom_model_max_tokens: "1048576"
+          config.ai_timeout: "480"
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
+          github_action_config.pr_actions: '["opened","synchronize","reopened","ready_for_review","review_requested"]'
+
+      - name: Verify PR agent produced usable review output
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_AGENT_STARTED_AT: ${{ steps.agent-window.outputs.started_at }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(jq -r '.pull_request.number // .issue.number // empty' "$GITHUB_EVENT_PATH")"
+          if [ -z "$pr_number" ]; then
+            echo "::error::Unable to resolve pull request number from event payload."
+            exit 1
+          fi
+
+          issue_comments="$(curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments?per_page=100")"
+
+          reviews="$(curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/reviews?per_page=100")"
+
+          failure_comment_count="$(echo "$issue_comments" | jq --arg since "$PR_AGENT_STARTED_AT" '
+            [.[] | select(
+              .user.login == "github-actions[bot]" and
+              .created_at >= $since and
+              .body == "Failed to generate code suggestions for PR"
+            )] | length
+          ')"
+
+          if [ "$failure_comment_count" -gt 0 ]; then
+            echo "::error::PR agent failed to generate usable review output."
+            exit 1
+          fi
+
+          issue_comment_count="$(echo "$issue_comments" | jq --arg since "$PR_AGENT_STARTED_AT" '
+            [.[] | select(
+              .user.login == "github-actions[bot]" and
+              .created_at >= $since and
+              (.body | length) > 0
+            )] | length
+          ')"
+
+          review_count="$(echo "$reviews" | jq --arg since "$PR_AGENT_STARTED_AT" '
+            [.[] | select(
+              .user.login == "github-actions[bot]" and
+              (.submitted_at // "") >= $since
+            )] | length
+          ')"
+
+          if [ $((issue_comment_count + review_count)) -eq 0 ]; then
+            echo "::error::PR agent completed without publishing any visible review output."
+            exit 1
+          fi

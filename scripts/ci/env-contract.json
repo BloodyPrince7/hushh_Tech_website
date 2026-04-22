@@ -1,0 +1,118 @@
+{
+  "clientRequired": [
+    "VITE_SUPABASE_URL",
+    "VITE_SUPABASE_ANON_KEY",
+    "VITE_SUPABASE_REDIRECT_URL",
+    "VITE_PLAID_REDIRECT_URI"
+  ],
+  "clientOptional": [
+    "VITE_NDA_GENERATION_URL",
+    "VITE_GUEST_MODE_ACCESS_TOKEN",
+    "VITE_MARKET_SUPABASE_URL",
+    "VITE_MARKET_SUPABASE_KEY",
+    "VITE_GEMINI_API_KEY",
+    "VITE_GEMINI_API_KEY_FALLBACK_1",
+    "VITE_GEMINI_API_KEY_FALLBACK_2",
+    "VITE_GEMINI_API_KEY_FALLBACK_3",
+    "VITE_OPENAI_API_KEY",
+    "VITE_ALLOW_INSECURE_BROWSER_LLM",
+    "VITE_N8N_WEBHOOK_URL",
+    "VITE_VOICE_AGENT_URL",
+    "VITE_FINNHUB_API_KEY",
+    "VITE_KYC_ENV",
+    "VITE_KYC_API_BASE",
+    "VITE_KYC_DEMO_MODE",
+    "VITE_KYC_TEST_BANK_IDS"
+  ],
+  "documentedServerVars": [
+    "APPLE_TEAM_ID",
+    "APPLE_CLIENT_ID",
+    "APPLE_KEY_ID",
+    "APPLE_KEY_FILE_PATH",
+    "OPENAI_API_KEY",
+    "PLAID_CLIENT_ID",
+    "PLAID_SECRET",
+    "PLAID_ENV",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "GMAIL_USER",
+    "GMAIL_APP_PASSWORD",
+    "GOOGLE_WALLET_ISSUER_ID",
+    "GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_WALLET_PRIVATE_KEY",
+    "GOOGLE_WALLET_CLASS_SUFFIX",
+    "GOOGLE_WALLET_ALLOWED_ORIGINS",
+    "LOOKER_STUDIO_EMBED_URL",
+    "GA4_PROPERTY_ID",
+    "GA4_ALLOWED_HOSTNAMES",
+    "APP_STORE_API_KEY_ID",
+    "APP_STORE_ISSUER_ID",
+    "N8N_BASIC_AUTH_USER",
+    "N8N_BASIC_AUTH_PASSWORD",
+    "N8N_ENCRYPTION_KEY"
+  ],
+  "buildWorkflowFiles": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/main-post-merge-smoke.yml",
+    ".github/workflows/deploy-uat.yml",
+    ".github/workflows/deploy-prod.yml"
+  ],
+  "deployWorkflowFiles": [
+    ".github/workflows/deploy-uat.yml",
+    ".github/workflows/deploy-prod.yml"
+  ],
+  "policyWorkflowFiles": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/main-post-merge-smoke.yml",
+    ".github/workflows/deploy-uat.yml",
+    ".github/workflows/deploy-prod.yml"
+  ],
+  "deployRuntimeRequired": [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY"
+  ],
+  "forbiddenProductionBrowserSecrets": [
+    "VITE_OPENAI_API_KEY",
+    "VITE_GEMINI_API_KEY",
+    "VITE_GEMINI_API_KEY_FALLBACK_1",
+    "VITE_GEMINI_API_KEY_FALLBACK_2",
+    "VITE_GEMINI_API_KEY_FALLBACK_3"
+  ],
+  "unsafeBooleanFlags": {
+    "VITE_ALLOW_INSECURE_BROWSER_LLM": "false"
+  },
+  "criticalServerRouteVars": {
+    "SUPABASE_URL": [
+      "api/public-investor-profile.js",
+      "api/delete-account-service.js",
+      "api/send-email-notification.js",
+      "api/metrics/service.js"
+    ],
+    "SUPABASE_SERVICE_ROLE_KEY": [
+      "api/public-investor-profile.js",
+      "api/delete-account-service.js",
+      "api/send-email-notification.js",
+      "api/metrics/service.js"
+    ],
+    "OPENAI_API_KEY": [
+      "api/generate-investor-profile.js",
+      "api/enrich-preferences.js"
+    ],
+    "GMAIL_USER": [
+      "api/send-email-notification.js",
+      "api/metrics/send-report.js"
+    ],
+    "GMAIL_APP_PASSWORD": [
+      "api/send-email-notification.js",
+      "api/metrics/send-report.js"
+    ],
+    "GOOGLE_WALLET_ISSUER_ID": [
+      "api/google-wallet-pass.js"
+    ],
+    "GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL": [
+      "api/google-wallet-pass.js"
+    ],
+    "GOOGLE_WALLET_PRIVATE_KEY": [
+      "api/google-wallet-pass.js"
+    ]
+  }
+}

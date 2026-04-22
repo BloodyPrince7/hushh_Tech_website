@@ -1,11 +1,13 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SITE_URL = "https://hushhTech.com";
+const SITEMAP_PATH = path.join(__dirname, "../public/sitemap.xml");
 const staticPages = ["/", "/about", "/contact", "/blog", "/privacy-policy", "/terms-of-service"];
 
 // Additional community routes based on observed URL structure in posts.ts
@@ -64,28 +66,48 @@ const communityRoutes = [
   "/community/news/investment-perspective"
 ];
 
+function readExistingLastMods() {
+  const candidateContents = [];
+
+  try {
+    candidateContents.push(execSync("git show HEAD:public/sitemap.xml", { encoding: "utf8" }));
+  } catch {
+    // Fall back to the current working-tree sitemap when the repo has no tracked file yet.
+  }
+
+  if (fs.existsSync(SITEMAP_PATH)) {
+    candidateContents.push(fs.readFileSync(SITEMAP_PATH, "utf8"));
+  }
+
+  for (const existingSitemap of candidateContents) {
+    const entries = [...existingSitemap.matchAll(/<url>\s*<loc>(.*?)<\/loc>\s*<lastmod>(.*?)<\/lastmod>/gs)];
+    if (entries.length > 0) {
+      return new Map(entries.map(([, loc, lastmod]) => [loc.trim(), lastmod.trim()]));
+    }
+  }
+
+  return new Map();
+}
+
+function getStableLastMod(existingLastMods, url, fallbackLastMod) {
+  return existingLastMods.get(url) || fallbackLastMod;
+}
+
 const generateSitemap = () => {
   console.log("🔹 Generating sitemap...");
+  const existingLastMods = readExistingLastMods();
+  const fallbackLastMod = fs.statSync(path.join(__dirname, "../package.json")).mtime.toISOString();
+  const scannedPostLastMods = new Map();
 
   // Generate URLs for static pages
   const staticUrls = staticPages.map((page) => {
+    const url = `${SITE_URL}${page}`;
     return `
       <url>
-        <loc>${SITE_URL}${page}</loc>
-        <lastmod>${new Date().toISOString()}</lastmod>
+        <loc>${url}</loc>
+        <lastmod>${getStableLastMod(existingLastMods, url, fallbackLastMod)}</lastmod>
         <changefreq>daily</changefreq>
         <priority>0.7</priority>
-      </url>`;
-  });
-
-  // Generate URLs for community routes with fixed URLs
-  const communityUrls = communityRoutes.map((route) => {
-    return `
-      <url>
-        <loc>${SITE_URL}${route}</loc>
-        <lastmod>${new Date().toISOString()}</lastmod>
-        <changefreq>weekly</changefreq>
-        <priority>0.8</priority>
       </url>`;
   });
 
@@ -125,11 +147,13 @@ const generateSitemap = () => {
         const filePath = path.join(directory, file);
         const stats = fs.statSync(filePath);
         const lastMod = stats.mtime.toISOString();
+        const url = `${SITE_URL}/community/${category}/${slug}`;
+        scannedPostLastMods.set(url, lastMod);
         
         // Add URL entry for the post
         postUrls.push(`
       <url>
-        <loc>${SITE_URL}/community/${category}/${slug}</loc>
+        <loc>${url}</loc>
         <lastmod>${lastMod}</lastmod>
         <changefreq>weekly</changefreq>
         <priority>0.8</priority>
@@ -140,6 +164,20 @@ const generateSitemap = () => {
     }
   });
 
+  // Generate URLs for community routes with deterministic lastmod values.
+  const communityUrls = communityRoutes.map((route) => {
+    const url = `${SITE_URL}${route}`;
+    const lastMod =
+      scannedPostLastMods.get(url) || getStableLastMod(existingLastMods, url, fallbackLastMod);
+    return `
+      <url>
+        <loc>${url}</loc>
+        <lastmod>${lastMod}</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>0.8</priority>
+      </url>`;
+  });
+
   // Combine all URLs
   const allUrls = [...staticUrls, ...communityUrls, ...postUrls].join("\n");
 
@@ -148,12 +186,11 @@ const generateSitemap = () => {
       ${allUrls}
     </urlset>`;
 
-  const filePath = path.join(__dirname, "../public/sitemap.xml");
-  fs.writeFileSync(filePath, sitemapContent);
+  fs.writeFileSync(SITEMAP_PATH, sitemapContent);
 
-  console.log(`✅ Sitemap successfully generated at ${filePath}`);
+  console.log(`✅ Sitemap successfully generated at ${SITEMAP_PATH}`);
   console.log(`✅ Added ${staticUrls.length} static pages, ${communityUrls.length} community pages, and ${postCount} scanned posts`);
-  console.log(`🔎 Verifying file: ${fs.existsSync(filePath) ? "✅ Exists" : "❌ Not Found"}`);
+  console.log(`🔎 Verifying file: ${fs.existsSync(SITEMAP_PATH) ? "✅ Exists" : "❌ Not Found"}`);
 };
 
 generateSitemap();

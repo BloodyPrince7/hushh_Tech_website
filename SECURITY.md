@@ -20,6 +20,13 @@ Include:
 - impact
 - any proof-of-concept or logs that help confirm the issue
 
+## Contribution safety
+
+- Fork and first-time contributor pull requests may require maintainer approval before code-executing workflows can run.
+- CODEOWNERS review and maintainer approval are required for protected branches.
+- Automated AI review and CI findings are advisory inputs to maintainers, not a substitute for human approval.
+- Production deploys are promoted from approved, smoke-green `main` SHAs only.
+
 ## Scope
 
 Please report issues involving:

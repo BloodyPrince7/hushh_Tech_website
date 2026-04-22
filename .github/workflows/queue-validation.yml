@@ -1,0 +1,152 @@
+name: Queue Validation
+
+on:
+  merge_group:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: queue-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20.19.0"
+  VITE_SUPABASE_URL: "https://example.supabase.co"
+  VITE_SUPABASE_ANON_KEY: "ci-anon-key"
+  VITE_SUPABASE_REDIRECT_URL: "https://hushhtech.com/auth/callback"
+  VITE_PLAID_REDIRECT_URI: "https://hushhtech.com/onboarding/financial-link"
+  VITE_ALLOW_INSECURE_BROWSER_LLM: "false"
+
+jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz
+          chmod +x gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Run secret scan
+        run: bash scripts/ci/orchestrate.sh secret
+
+  env-contract:
+    name: Env Contract Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate environment contract
+        run: bash scripts/ci/orchestrate.sh env
+
+  web-validation:
+    name: Web Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test, type-check, and build
+        run: bash scripts/ci/orchestrate.sh web
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run phased lint checks
+        run: bash scripts/ci/orchestrate.sh lint
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Capture npm audit report
+        run: |
+          mkdir -p tmp/ci
+          npm audit --json > tmp/ci/npm-audit-report.json || true
+
+      - name: Enforce audit regression budget
+        run: node scripts/ci/check-audit-regression.mjs tmp/ci/npm-audit-report.json
+
+  ci-status:
+    name: CI Status Gate
+    if: always()
+    needs:
+      - secret-scan
+      - env-contract
+      - web-validation
+      - lint
+      - security-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate queue job outcomes
+        shell: bash
+        run: |
+          declare -A REQUIRED_RESULTS=(
+            ["Secret Scan"]="${{ needs.secret-scan.result }}"
+            ["Env Contract Check"]="${{ needs.env-contract.result }}"
+            ["Web Validation"]="${{ needs.web-validation.result }}"
+            ["Lint"]="${{ needs.lint.result }}"
+            ["Security Audit"]="${{ needs.security-audit.result }}"
+          )
+
+          failed=0
+          for job in "${!REQUIRED_RESULTS[@]}"; do
+            result="${REQUIRED_RESULTS[$job]}"
+            echo "$job => $result"
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more queue validation jobs failed."
+            exit 1
+          fi

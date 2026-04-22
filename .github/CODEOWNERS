@@ -1,0 +1,24 @@
+# Default ownership
+* @ankitkumarsingh1702
+
+# Governance and deployment
+.github/ @ankitkumarsingh1702
+.github/workflows/ @ankitkumarsingh1702
+LICENSE @ankitkumarsingh1702
+NOTICE @ankitkumarsingh1702
+README.md @ankitkumarsingh1702
+CONTRIBUTING.md @ankitkumarsingh1702
+SECURITY.md @ankitkumarsingh1702
+
+# Runtime-sensitive application paths
+api/ @ankitkumarsingh1702
+server.js @ankitkumarsingh1702
+src/auth/ @ankitkumarsingh1702
+src/resources/config/ @ankitkumarsingh1702
+src/services/runtime/ @ankitkumarsingh1702
+
+# Security, env, and operational tooling
+scripts/ci/ @ankitkumarsingh1702
+scripts/security/ @ankitkumarsingh1702
+.env.local.example @ankitkumarsingh1702
+src/vite-env.d.ts @ankitkumarsingh1702

@@ -2,9 +2,11 @@
 
 Thanks for contributing to Hushh Tech Website.
 
+All contributions are accepted under the Apache License, Version 2.0.
+
 ## Before you start
 
-- Read [README.md](/Users/ankitkumarsingh/hushhTech/README.md) for the repo layout.
+- Read [README.md](README.md) for the repo layout.
 - Do not commit secrets, keys, `.env` files, `.p8` files, or service-account JSON.
 - Treat GCP Secret Manager as the production source of truth for sensitive values.
 - Assume this repo is a public wrapper around production systems, not the source of truth for private infrastructure state.
@@ -14,6 +16,8 @@ Thanks for contributing to Hushh Tech Website.
 ```bash
 npm ci
 npm run test
+npm run env:check
+npm run lint:ci
 npm run security:gitleaks
 ```
 
@@ -27,9 +31,25 @@ npm run security:audit
 ## Branching and pull requests
 
 - Do not push directly to `main`.
+- Do not push directly to `develop`.
 - Create a topic branch from `main`.
 - Keep pull requests focused and small enough to review.
 - Explain what changed, why it changed, and how you validated it.
+- Sign every commit with DCO using `git commit -s`.
+- Every PR commit must contain a `Signed-off-by: Your Name <email>` trailer.
+- Protected branches require an approving review from `@ankitkumarsingh1702`.
+- CODEOWNERS automatically routes PRs to the default maintainer.
+- AI review comments help surface risk, but they do not replace human approval.
+- The first automated review is powered by Qodo PR Agent on Gemini and is expected to comment on risky changes before maintainer review.
+- PR Agent auto-reviews PRs on open, sync, review-requested, and ready-for-review events; maintainers can also trigger follow-up review with a `/review` comment.
+- Re-trigger `/review` after a substantial PR update, after resolving requested changes, or when you want a fresh Gemini pass on the latest diff before maintainer review.
+- First-time or fork contributors may need maintainer approval before code-executing workflows can run.
+
+Example:
+
+```bash
+git commit -s -m "feat: harden governed CI pipeline"
+```
 
 ## What maintainers expect
 
@@ -45,10 +65,13 @@ npm run security:audit
 At minimum, run the narrowest relevant checks for your change. Examples:
 
 - `npm run test`
-- `npx vite build`
+- `npx tsc --noEmit`
+- `npm run build:web`
+- `npm run env:check`
+- `npm run lint:ci`
 - `npm run security:gitleaks`
 - `npm run security:pre-commit`
 
 ## Security issues
 
-Do not file public issues for vulnerabilities. Follow [SECURITY.md](/Users/ankitkumarsingh/hushhTech/SECURITY.md).
+Do not file public issues for vulnerabilities. Follow [SECURITY.md](SECURITY.md).

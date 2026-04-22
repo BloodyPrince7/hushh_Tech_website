@@ -11,12 +11,13 @@ import { execSync } from 'child_process'
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
 // Capture git commit hash at build time for deployment verification
-let gitCommitHash = 'unknown'
-try {
-  gitCommitHash = execSync('git rev-parse --short HEAD').toString().trim()
-} catch {
-  gitCommitHash = 'unknown'
-}
+const gitCommitHash = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim()
+  } catch {
+    return 'unknown'
+  }
+})()
 
 export default defineConfig({
   define: {

@@ -33,3 +33,4 @@ vertex-ai-key.json
 private_keys/
 .pre-commit-cache/
 .gitleaks-report.json
+tmp/

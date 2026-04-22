@@ -1,34 +1,94 @@
 name: Deploy to PROD
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact green main SHA to deploy to production
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: deploy-production-${{ github.event.inputs.sha || github.run_id }}
+  cancel-in-progress: false
 
 env:
+  NODE_VERSION: "20.19.0"
   SMOKE_BASE_URL: https://hushhtech.com
   SHARED_SECRETS_PROJECT: "53407187172"
   VITE_SUPABASE_REDIRECT_URL: https://hushhtech.com/auth/callback
   VITE_PLAID_REDIRECT_URI: https://hushhtech.com/onboarding/financial-link
+  VITE_SUPABASE_URL: https://example.supabase.co
+  VITE_SUPABASE_ANON_KEY: ci-anon-key
+  VITE_ALLOW_INSECURE_BROWSER_LLM: "false"
 
 jobs:
   deploy:
     name: Build & Deploy to Cloud Run (PROD)
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: Production – hushh-tech
+      url: https://hushhtech.com
     steps:
+      - name: Assert manual dispatch originates from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Refusing production deploy from '${GITHUB_REF_NAME}'. Trigger this workflow from 'main' only."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate deployment SHA against green main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUIRED_BRANCH: main
+          REQUIRE_CI_SUCCESS: "1"
+          REQUIRED_CHECK_NAME: Main Post-Merge Smoke Gate
+        run: bash scripts/ci/require-deploy-sha-on-main.sh "${{ github.event.inputs.sha }}"
+
+      - name: Checkout deployment SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "${{ github.event.inputs.sha }}"
 
       # 1. Prepare Node.js and dependencies
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --no-audit --no-fund
 
       # 2. Auth with GCP and load shared web-build secrets
+      # Prefer an environment-scoped GCP_SA_KEY_PROD secret so deploy approval gates access.
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_PROD }}
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set GCP project context
+        run: gcloud config set project hushh-tech-prod
+
+      - name: Assert GCP project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null)"
+          if [ "$ACTIVE_PROJECT" != "hushh-tech-prod" ]; then
+            echo "Refusing deploy: expected project 'hushh-tech-prod' but got '$ACTIVE_PROJECT'."
+            exit 1
+          fi
 
       - name: Load web auth build env from Secret Manager
         shell: bash
@@ -58,7 +118,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY VITE_SUPABASE_REDIRECT_URL VITE_PLAID_REDIRECT_URI; do
+          for name in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY VITE_SUPABASE_REDIRECT_URL VITE_PLAID_REDIRECT_URI VITE_ALLOW_INSECURE_BROWSER_LLM; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is required for the web auth build"
               missing=1
@@ -67,7 +127,12 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-      - run: npx vite build
+          if [ "$VITE_ALLOW_INSECURE_BROWSER_LLM" != "false" ]; then
+            echo "::error::VITE_ALLOW_INSECURE_BROWSER_LLM must remain false in production."
+            exit 1
+          fi
+      - run: npm run env:check
+      - run: npm run build:web
 
       # 4. Deploy pre-built dist/ to Cloud Run (runtime-only Dockerfile)
       - name: Deploy to Cloud Run
@@ -91,4 +156,12 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Smoke OAuth startup on deployed host
-        run: node scripts/smoke-oauth-start.mjs "$SMOKE_BASE_URL"
+        run: node scripts/smoke-oauth-start.mjs "$SMOKE_BASE_URL" > /tmp/prod-oauth-smoke.json
+
+      - name: Upload production smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-oauth-smoke
+          if-no-files-found: error
+          path: /tmp/prod-oauth-smoke.json
